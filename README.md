@@ -41,7 +41,7 @@ Maven:
 
 Gradle:
 ```
-testCompile group: 'io.appium', name: 'mitmproxy-java', version: '2.0.2'
+testImplementation group: 'io.appium', name: 'mitmproxy-java', version: '2.0.2'
 ```
 
 ## Usage
@@ -89,5 +89,5 @@ See [node-mitmproxy](https://github.com/jvilk/mitmproxy-node/blob/master/README.
 
 ## Develop
 
-Upload to Central Repository with command `./gradlew uploadArchives`
+Upload to Central Repository with command `./gradlew publish`
 Set username and password in `build.gradle` file
