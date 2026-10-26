@@ -61,18 +61,7 @@ public class MitmproxyJava {
         // python script file is zipped inside our jar. extract it into a temporary file.
         String pythonScriptPath = extractPythonScriptToFile();
 
-        final List<String> mitmproxyStartParams = new ArrayList<>();
-        mitmproxyStartParams.add(mitmproxyPath);
-        mitmproxyStartParams.add("--anticache");
-        mitmproxyStartParams.add("-p");
-        mitmproxyStartParams.add(String.valueOf(proxyPort));
-        mitmproxyStartParams.add("-s");
-        mitmproxyStartParams.add(pythonScriptPath);
-
-        // adding params if needed for mitmproxy
-        if (isNotEmpty(this.extraMitmdumpParams)) {
-            mitmproxyStartParams.addAll(this.extraMitmdumpParams);
-        }
+        final List<String> mitmproxyStartParams = buildMitmproxyStartParams(pythonScriptPath);
 
         mitmproxyProcess = new ProcessExecutor()
                 .command(mitmproxyStartParams)
@@ -81,9 +70,64 @@ public class MitmproxyJava {
                 .start()
                 .getFuture();
 
-        waitForPortToBeInUse(proxyPort);
-        log.info("Mitmproxy started on port {}", proxyPort);
+        if (isLocalModeOnly()) {
+            waitForLocalModeToStart();
+            log.info("Mitmproxy started in local mode");
+        } else {
+            waitForPortToBeInUse(proxyPort);
+            log.info("Mitmproxy started on port {}", proxyPort);
+        }
         return this;
+    }
+
+    List<String> buildMitmproxyStartParams(String pythonScriptPath) {
+        final List<String> mitmproxyStartParams = new ArrayList<>();
+        mitmproxyStartParams.add(mitmproxyPath);
+        mitmproxyStartParams.add("--anticache");
+        if (!isLocalModeOnly()) {
+            mitmproxyStartParams.add("-p");
+            mitmproxyStartParams.add(String.valueOf(proxyPort));
+        }
+        mitmproxyStartParams.add("-s");
+        mitmproxyStartParams.add(pythonScriptPath);
+
+        // adding params if needed for mitmproxy
+        if (isNotEmpty(this.extraMitmdumpParams)) {
+            mitmproxyStartParams.addAll(this.extraMitmdumpParams);
+        }
+        return mitmproxyStartParams;
+    }
+
+    boolean isLocalModeOnly() {
+        if (!isNotEmpty(this.extraMitmdumpParams)) {
+            return false;
+        }
+        boolean hasLocalMode = false;
+        for (int i = 0; i < this.extraMitmdumpParams.size(); i++) {
+            String param = this.extraMitmdumpParams.get(i);
+            if (param == null) {
+                continue;
+            }
+            String modeSpec = null;
+            if ("--mode".equals(param) || "-m".equals(param)) {
+                if (i + 1 < this.extraMitmdumpParams.size()) {
+                    modeSpec = this.extraMitmdumpParams.get(++i);
+                }
+            } else if (param.startsWith("--mode=")) {
+                modeSpec = param.substring("--mode=".length());
+            } else if (param.startsWith("-m=")) {
+                modeSpec = param.substring("-m=".length());
+            }
+            if (modeSpec != null) {
+                String normalized = modeSpec.trim().toLowerCase();
+                if (normalized.equals("local") || normalized.startsWith("local:") || normalized.startsWith("!local")) {
+                    hasLocalMode = true;
+                } else {
+                    return false;
+                }
+            }
+        }
+        return hasLocalMode;
     }
 
     private String extractPythonScriptToFile() throws IOException {
@@ -103,8 +147,34 @@ public class MitmproxyJava {
         if (mitmproxyProcess != null) {
             mitmproxyProcess.cancel(true);
         }
-        server.stop(1000);
-        waitForPortToBeFree(proxyPort);
+        if (server != null) {
+            server.stop(1000);
+        }
+        if (!isLocalModeOnly()) {
+            waitForPortToBeFree(proxyPort);
+        }
+    }
+
+    @SneakyThrows
+    private void waitForLocalModeToStart() {
+        final LocalDateTime timeoutTime = LocalDateTime.now().plusMinutes(TIMEOUT_FOR_SOCKET_CHECKING_MINS);
+
+        while (true) {
+            if (timeoutTime.isBefore(LocalDateTime.now())) {
+                throw new TimeoutException("Timed out waiting for mitmproxy to start in local mode");
+            }
+            if (mitmproxyProcess != null && mitmproxyProcess.isDone()) {
+                throw new TimeoutException("Mitmproxy process exited prematurely during startup");
+            }
+            if (server != null && !server.getConnections().isEmpty()) {
+                return;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     @SneakyThrows
@@ -136,6 +206,10 @@ public class MitmproxyJava {
 
             if(timeoutTime.isBefore(LocalDateTime.now())){
                 throw new TimeoutException("Timed out waiting for mitmproxy to start");
+            }
+
+            if (mitmproxyProcess != null && mitmproxyProcess.isDone()) {
+                throw new TimeoutException("Mitmproxy process exited prematurely during startup");
             }
 
             try (Socket s = new Socket(LOCALHOST_IP, port)) {

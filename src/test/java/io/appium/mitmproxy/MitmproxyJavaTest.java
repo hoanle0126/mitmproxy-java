@@ -9,6 +9,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
@@ -130,5 +131,55 @@ public class MitmproxyJavaTest {
         //to verify that additional params were actually included to start path
         verify(spiedParams).toArray();
 
+    }
+
+    @Test
+    public void shouldOmitPortArgumentInLocalModeOnly() {
+        MitmproxyJava localProxy = new MitmproxyJava(
+                MITMDUMP_PATH,
+                (InterceptedMessage m) -> m,
+                8089,
+                Arrays.asList("--mode", "local", "--showhost")
+        );
+
+        assertThat(localProxy.isLocalModeOnly()).isTrue();
+        assertThat(localProxy.buildMitmproxyStartParams("/path/to/proxy.py")).containsExactly(
+                MITMDUMP_PATH,
+                "--anticache",
+                "-s",
+                "/path/to/proxy.py",
+                "--mode",
+                "local",
+                "--showhost"
+        );
+    }
+
+    @Test
+    public void shouldIncludePortArgumentInRegularOrMixedMode() {
+        MitmproxyJava defaultProxy = new MitmproxyJava(
+                MITMDUMP_PATH,
+                (InterceptedMessage m) -> m,
+                8089,
+                Arrays.asList("--showhost")
+        );
+        MitmproxyJava mixedModeProxy = new MitmproxyJava(
+                MITMDUMP_PATH,
+                (InterceptedMessage m) -> m,
+                8089,
+                Arrays.asList("--mode", "local:curl", "--mode", "regular")
+        );
+
+        assertThat(defaultProxy.isLocalModeOnly()).isFalse();
+        assertThat(defaultProxy.buildMitmproxyStartParams("/path/to/proxy.py")).containsExactly(
+                MITMDUMP_PATH,
+                "--anticache",
+                "-p",
+                "8089",
+                "-s",
+                "/path/to/proxy.py",
+                "--showhost"
+        );
+        assertThat(mixedModeProxy.isLocalModeOnly()).isFalse();
+        assertThat(mixedModeProxy.buildMitmproxyStartParams("/path/to/proxy.py")).contains("-p", "8089");
     }
 }
